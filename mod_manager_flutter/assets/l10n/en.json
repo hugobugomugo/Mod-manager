@@ -43,7 +43,7 @@
     "linux_title": "GameBanana Marketplace",
     "linux_body": "On Linux, the marketplace opens in a separate window. Click the button below to browse and download mods.",
     "open_marketplace": "Open Marketplace",
-    "watching_downloads": "Watching Downloads folder...",
+    "_downloads": "Watching Downloads folder...",
     "start_watching": "Start watching",
     "stop_watching": "Stop watching",
     "open_browser": "Open in Browser",
