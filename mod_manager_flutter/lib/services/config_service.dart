@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
 import '../utils/path_helper.dart';
 
-/// Сервіс для роботи з конфігурацією додатку
 class ConfigService {
   static const String _keyModsPath = 'mods_path';
   static const String _keySaveModsPath = 'save_mods_path';
@@ -29,13 +28,12 @@ class ConfigService {
       final configPath = path.join(appDataPath, AppConstants.configFileName);
       _configFile = File(configPath);
       
-      // Створюємо директорію якщо її немає
       final dir = Directory(appDataPath);
       if (!dir.existsSync()) {
         dir.createSync(recursive: true);
       }
     } catch (e) {
-      // Fallback на поточну директорію для розробки
+      // fallback to cwd during dev
       final configPath = path.join(Directory.current.path, AppConstants.configFileName);
       _configFile = File(configPath);
     }
@@ -166,7 +164,6 @@ class ConfigService {
     }
   }
 
-  /// Очищає теги для модів, які більше не існують
   Future<void> cleanupInvalidTags(List<String> validModIds) async {
     try {
       final tags = modCharacterTags;
@@ -187,7 +184,7 @@ class ConfigService {
         await _saveToFile();
       }
     } catch (e) {
-      // Ігноруємо помилки
+      // ignore
     }
   }
 

@@ -10,7 +10,6 @@ import 'platform_service.dart';
 import 'platform_service_factory.dart';
 import 'ini_parser_service.dart';
 
-/// Головний сервіс для керування модами через symbolic links
 class ModManagerService {
   final ConfigService _configService;
   final PlatformService _platformService;
@@ -29,19 +28,19 @@ class ModManagerService {
     final saveMods = saveModsPath;
 
     if (mods == null || mods.isEmpty || saveMods == null || saveMods.isEmpty) {
-      return (false, 'Шляхи не налаштовані. Будь ласка, налаштуйте їх у Налаштуваннях.');
+      return (false, 'Paths not configured. Set them in Settings.');
     }
 
     final modsDir = Directory(mods);
     if (!await modsDir.exists()) {
-      return (false, 'Папка з модами не існує: $mods');
+      return (false, 'Mods folder does not exist: $mods');
     }
 
     final saveModsDir = Directory(saveMods);
     if (await saveModsDir.exists()) {
       final stat = await saveModsDir.stat();
       if (stat.type != FileSystemEntityType.directory) {
-        return (false, 'Шлях для links існує але не є папкою: $saveMods');
+        return (false, 'Links path exists but is not a folder: $saveMods');
       }
     }
 
@@ -78,7 +77,6 @@ class ModManagerService {
       final modsInfo = <ModInfo>[];
       final favoriteSet = _configService.favoriteMods.toSet();
 
-      // Очищуємо символічні посилання на неіснуючі моди
       await _cleanupInvalidLinks();
 
       for (final modName in modNames) {
@@ -103,7 +101,6 @@ class ModManagerService {
     }
   }
 
-  /// Видаляє символічні посилання на моди, які більше не існують
   Future<void> _cleanupInvalidLinks() async {
     try {
       if (saveModsPath == null) return;
@@ -118,19 +115,18 @@ class ModManagerService {
         if (entity is Link) {
           final linkName = path.basename(entity.path);
           
-          // Якщо мод більше не існує в папці модів - видаляємо символічне посилання
           if (!validModNames.contains(linkName)) {
             try {
               await entity.delete();
               await _configService.removeActiveMod(linkName);
             } catch (e) {
-              // Ігноруємо помилки при видаленні
+              // ignore delete errors
             }
           }
         }
       }
     } catch (e) {
-      // Ігноруємо помилки
+      // ignore
     }
   }
 
@@ -142,7 +138,6 @@ class ModManagerService {
       final exists = await FileSystemEntity.type(linkPath) != FileSystemEntityType.notFound;
       if (!exists) return false;
 
-      // Використовуємо platformService для перевірки
       return await _platformService.isModLink(linkPath);
     } catch (e) {
       return false;
@@ -165,16 +160,14 @@ class ModManagerService {
         await saveModsDir.create(recursive: true);
       }
 
-      // Використовуємо platformService для створення link
       final success = await _platformService.createModLink(srcPath, dstPath);
       if (!success) {
-        print('ModManagerService: Не вдалося створити link для $modName');
+        print('ModManagerService: failed to create link for $modName');
         return false;
       }
 
       await _configService.addActiveMod(modName);
 
-      // Автоматично перезавантажуємо моди після активації (якщо увімкнено)
       final autoF10Enabled = _container.read(autoF10ReloadProvider);
       if (autoF10Enabled) {
         await _platformService.sendF10ToGame();
@@ -182,7 +175,84 @@ class ModManagerService {
 
       return true;
     } catch (e) {
-      print('ModManagerService: Помилка активації мода: $e');
+      print('ModManagerService: activateMod error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> renameMod(String oldName, String newName) async {
+    try {
+      if (modsPath == null) return false;
+
+      final trimmed = newName.trim();
+      if (trimmed.isEmpty || trimmed == oldName) return false;
+
+      final oldModPath = path.join(modsPath!, oldName);
+      final newModPath = path.join(modsPath!, trimmed);
+
+      final oldDir = Directory(oldModPath);
+      if (!await oldDir.exists()) return false;
+
+      final newDir = Directory(newModPath);
+      if (await newDir.exists()) return false;
+
+      final wasActive = await isModActive(oldName);
+
+      // Remove old symlink before renaming the folder
+      if (wasActive && saveModsPath != null) {
+        final oldLinkPath = path.join(saveModsPath!, oldName);
+        await _platformService.removeModLink(oldLinkPath);
+        await _configService.removeActiveMod(oldName);
+      }
+
+      await oldDir.rename(newModPath);
+
+      // Restore symlink under new name
+      if (wasActive && saveModsPath != null) {
+        final newLinkPath = path.join(saveModsPath!, trimmed);
+        await _platformService.createModLink(newModPath, newLinkPath);
+        await _configService.addActiveMod(trimmed);
+      }
+
+      // Migrate character tag
+      final existingTag = _configService.modCharacterTags[oldName];
+      if (existingTag != null) {
+        await _configService.setModCharacterTag(trimmed, existingTag);
+        await _configService.removeModCharacterTag(oldName);
+      }
+
+      // Migrate favorite
+      final favorites = _configService.favoriteMods;
+      if (favorites.contains(oldName)) {
+        await _configService.removeFavoriteMod(oldName);
+        await _configService.addFavoriteMod(trimmed);
+      }
+
+      return true;
+    } catch (e) {
+      print('ModManagerService: renameMod error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteMod(String modId) async {
+    try {
+      if (modsPath == null) return false;
+
+      if (await isModActive(modId)) {
+        await deactivateMod(modId);
+      }
+
+      await _configService.removeFavoriteMod(modId);
+
+      final modDir = Directory(path.join(modsPath!, modId));
+      if (await modDir.exists()) {
+        await modDir.delete(recursive: true);
+      }
+
+      return true;
+    } catch (e) {
+      print('ModManagerService: deleteMod error: $e');
       return false;
     }
   }
@@ -195,16 +265,14 @@ class ModManagerService {
       final exists = await FileSystemEntity.type(linkPath) != FileSystemEntityType.notFound;
       if (!exists) return false;
 
-      // Використовуємо platformService для видалення link
       final success = await _platformService.removeModLink(linkPath);
       if (!success) {
-        print('ModManagerService: Не вдалося видалити link для $modName');
+        print('ModManagerService: failed to remove link for $modName');
         return false;
       }
 
       await _configService.removeActiveMod(modName);
 
-      // Автоматично перезавантажуємо моди після деактивації (якщо увімкнено)
       final autoF10Enabled = _container.read(autoF10ReloadProvider);
       if (autoF10Enabled) {
         await _platformService.sendF10ToGame();
@@ -212,7 +280,7 @@ class ModManagerService {
 
       return true;
     } catch (e) {
-      print('ModManagerService: Помилка деактивації мода: $e');
+      print('ModManagerService: deactivateMod error: $e');
       return false;
     }
   }
@@ -240,32 +308,25 @@ class ModManagerService {
     }
   }
 
-  /// Ручне перезавантаження модів (натискання F10)
   Future<bool> reloadMods() async {
     return await _platformService.sendF10ToGame();
   }
 
-  /// Показує інструкції налаштування F10 сервісу
   void showF10SetupInstructions() {
     _platformService.showSetupInstructions();
   }
 
-  /// Встановлює залежності для F10 сервісу
   Future<void> installF10Dependencies() async {
     await _platformService.checkDependencies();
   }
 
   Future<void> _safeRemove(String filePath) async {
     try {
-      // Використовуємо platformService для видалення links
       final isLink = await _platformService.isModLink(filePath);
-      
       if (isLink) {
         await _platformService.removeModLink(filePath);
         return;
       }
-      
-      // Якщо це не link, видаляємо звичайним способом
       final entity = await FileSystemEntity.type(filePath);
       if (entity == FileSystemEntityType.directory) {
         await Directory(filePath).delete(recursive: true);
@@ -273,12 +334,10 @@ class ModManagerService {
         await File(filePath).delete();
       }
     } catch (e) {
-      print('ModManagerService: Помилка _safeRemove: $e');
+      print('ModManagerService: _safeRemove error: $e');
     }
   }
 
-  /// Імпортує нові моди з вказаних папок
-  /// Повертає список імпортованих модів та їх автоматично визначених тегів персонажів
   Future<(List<String>, Map<String, String>)> importMods(List<String> folderPaths) async {
     try {
       final (valid, _) = await validatePaths();
@@ -300,16 +359,11 @@ class ModManagerService {
         final targetPath = path.join(modsPath!, modName);
         final targetDir = Directory(targetPath);
 
-        // Якщо мод вже існує, пропускаємо
-        if (await targetDir.exists()) {
-          continue;
-        }
+        if (await targetDir.exists()) continue;
 
-        // Копіюємо папку з модом
         await _copyDirectory(sourceDir, targetDir);
         importedMods.add(modName);
 
-        // Автоматично визначаємо тег персонажа з назви папки
         final detectedChar = await _detectCharacterFromName(modName);
         if (detectedChar != null) {
           autoTags[modName] = detectedChar;
@@ -322,21 +376,27 @@ class ModManagerService {
     }
   }
 
-  /// Визначає персонажа з назви моду
+  String _normalizeModName(String name) {
+    // Insert space before an uppercase letter that follows a lowercase letter (CamelCase split)
+    final camelExpanded = name.replaceAllMapped(
+      RegExp(r'([a-z])([A-Z])'),
+      (m) => '${m[1]} ${m[2]}',
+    );
+    return camelExpanded
+        .replaceAll(RegExp(r'[_\-\.\s]+'), ' ')
+        .toLowerCase()
+        .trim();
+  }
+
   Future<String?> _detectCharacterFromName(String modName) async {
-    final nameLower = modName.toLowerCase();
-    
-    // Спробуємо знайти персонажа в INI файлах моду
+    final normalizedName = _normalizeModName(modName);
     try {
       final modsPath = _configService.modsPath;
-      if (modsPath == null || modsPath.isEmpty) {
-        // Якщо шлях не налаштовано, просто шукаємо в назві
-      } else {
+      if (modsPath != null && modsPath.isNotEmpty) {
         final modPath = path.join(modsPath, modName);
         final modDir = Directory(modPath);
       
       if (await modDir.exists()) {
-        // Шукаємо INI файли
         final iniFiles = await modDir
             .list(recursive: true)
             .where((entity) => 
@@ -348,20 +408,16 @@ class ModManagerService {
         for (final iniFile in iniFiles) {
           try {
             final content = await iniFile.readAsString();
-            final contentLower = content.toLowerCase();
-            
-            // Шукаємо в Header або секціях INI
-            final charFromIni = _findCharacterInText(contentLower);
+            final charFromIni = _findCharacterInText(content.toLowerCase());
             if (charFromIni != null) {
-              print('ModManager: Виявлено персонажа "$charFromIni" в INI файлі ${path.basename(iniFile.path)} моду "$modName"');
+              print('ModManager: detected "$charFromIni" from INI ${path.basename(iniFile.path)} in "$modName"');
               return charFromIni;
             }
           } catch (e) {
-            // Ігноруємо помилки читання окремих файлів
+            // ignore unreadable files
           }
         }
-        
-        // Також перевіряємо імена папок всередині моду
+
         final subdirs = await modDir
             .list(recursive: false)
             .where((entity) => entity is Directory)
@@ -369,20 +425,19 @@ class ModManagerService {
             .toList();
         
         for (final subdir in subdirs) {
-          final subdirName = path.basename(subdir.path).toLowerCase();
+          final subdirName = _normalizeModName(path.basename(subdir.path));
           final charFromSubdir = _findCharacterInText(subdirName);
           if (charFromSubdir != null) {
-            print('ModManager: Виявлено персонажа "$charFromSubdir" в папці "$subdirName" моду "$modName"');
+            print('ModManager: detected "$charFromSubdir" from subdir "$subdirName" in "$modName"');
             return charFromSubdir;
           }
         }
       }
-      }
-    } catch (e) {
-      print('ModManager: Помилка пошуку в файлах моду "$modName": $e');
     }
-    
-    // Мапа персонажів з альтернативними іменами для кращого розпізнавання
+    } catch (e) {
+      print('ModManager: error scanning mod files for "$modName": $e');
+    }
+
     final characterAliases = <String, List<String>>{
       'alice': ['alice', 'alice thymefield'],
       'anby': ['anby', 'anby demara'],
@@ -390,8 +445,8 @@ class ModManagerService {
       'aria': ['aria'],
       'astra': ['astra', 'astrayao', 'astra yao'],
       'banyue': ['banyue'],
-      'belle': ['belle'], 
-      'ben': ['ben', 'bigger', 'ben bigger'],
+      'belle': ['belle'],
+      'ben': ['ben', 'ben bigger'],
       'billy': ['billy', 'billyherinkton', 'billy kid'],
       'burnice': ['burnice', 'burnice white'],
       'caesar': ['caesar', 'caesar king'],
@@ -442,39 +497,21 @@ class ModManagerService {
       'zhuyuan': ['zhuyuan', 'zhu yuan'],
     };
 
-    // Спочатку шукаємо повні збіги для точності
     for (final entry in characterAliases.entries) {
       final charId = entry.key;
-      final aliases = entry.value;
-      
-      for (final alias in aliases) {
-        // Шукаємо як окреме слово з границями
+      for (final alias in entry.value) {
         final pattern = RegExp(r'\b' + RegExp.escape(alias) + r'\b', caseSensitive: false);
-        if (pattern.hasMatch(nameLower)) {
-          print('ModManager: Виявлено персонажа "$charId" (збіг: "$alias") в "$modName"');
-          return charId;
-        }
-      }
-    }
-    
-    // Якщо не знайшли повну збіг, шукаємо часткові збіги (як раніше)
-    for (final entry in characterAliases.entries) {
-      final charId = entry.key;
-      final aliases = entry.value;
-      
-      for (final alias in aliases) {
-        if (nameLower.contains(alias)) {
-          print('ModManager: Виявлено персонажа "$charId" (частковий збіг: "$alias") в "$modName"');
+        if (pattern.hasMatch(normalizedName)) {
+          print('ModManager: detected "$charId" (alias: "$alias") in "$modName"');
           return charId;
         }
       }
     }
 
-    print('ModManager: Не вдалося визначити персонажа для "$modName"');
+    print('ModManager: no character detected for "$modName"');
     return null;
   }
-  
-  /// Допоміжний метод для пошуку персонажа в тексті
+
   String? _findCharacterInText(String text) {
     final textLower = text.toLowerCase();
     
@@ -484,8 +521,8 @@ class ModManagerService {
       'anton': ['anton'],
       'astra': ['astra', 'astrayao', 'astra yao'],
       'belle': ['belle'],
-      'ben': ['ben', 'bigger', 'ben bigger'],
-      'billy': ['billy', 'billyherinkton', 'billy kid'],
+      'ben': ['ben', 'ben bigger'],
+      'billy': ['billy', 'billy kid'],
       'burnice': ['burnice', 'burnice white'],
       'caesar': ['caesar', 'caesar king'],
       'corin': ['corin', 'corin wickes'],
@@ -523,51 +560,26 @@ class ModManagerService {
       'zhuyuan': ['zhuyuan', 'zhu yuan'],
     };
     
-    // Спочатку шукаємо повні збіги
     for (final entry in characterAliases.entries) {
       final charId = entry.key;
-      final aliases = entry.value;
-      
-      for (final alias in aliases) {
+      for (final alias in entry.value) {
         final pattern = RegExp(r'\b' + RegExp.escape(alias) + r'\b', caseSensitive: false);
-        if (pattern.hasMatch(textLower)) {
-          return charId;
-        }
+        if (pattern.hasMatch(textLower)) return charId;
       }
     }
-    
-    // Часткові збіги
-    for (final entry in characterAliases.entries) {
-      final charId = entry.key;
-      final aliases = entry.value;
-      
-      for (final alias in aliases) {
-        if (textLower.contains(alias)) {
-          return charId;
-        }
-      }
-    }
-    
+
     return null;
   }
 
-  /// Автоматично визначає та встановлює теги для всіх модів
-  /// Повертає кількість модів з визначеними тегами
   Future<Map<String, String>> autoTagAllMods() async {
     try {
       final modNames = await scanMods();
       final autoTags = <String, String>{};
 
       for (final modName in modNames) {
-        // Перевіряємо чи вже є тег для цього моду
         final existingTag = _configService.modCharacterTags[modName];
-        
-        // Якщо тег вже є і він не 'unknown', пропускаємо
-        if (existingTag != null && existingTag != 'unknown') {
-          continue;
-        }
+        if (existingTag != null && existingTag != 'unknown') continue;
 
-        // Автоматично визначаємо тег з назви
         final detectedChar = await _detectCharacterFromName(modName);
         if (detectedChar != null) {
           await _configService.setModCharacterTag(modName, detectedChar);
@@ -581,7 +593,6 @@ class ModManagerService {
     }
   }
 
-  /// Рекурсивно копіює директорію
   Future<void> _copyDirectory(Directory source, Directory destination) async {
     await destination.create(recursive: true);
     
@@ -602,39 +613,28 @@ class ModManagerService {
     }
   }
 
-  /// Зчитує keybinds для конкретного персонажа (моду)
-  /// characterId - назва папки персонажа в modsPath
   Future<CharacterKeybinds?> getCharacterKeybinds(String characterId) async {
     try {
       if (modsPath == null) return null;
-
       final characterPath = path.join(modsPath!, characterId);
-      final characterDir = Directory(characterPath);
-      
-      if (!await characterDir.exists()) return null;
-
+      if (!await Directory(characterPath).exists()) return null;
       return await _iniParser.parseCharacterDirectory(characterId, characterPath);
     } catch (e) {
-      print('ModManagerService: Помилка зчитування keybinds для $characterId: $e');
+      print('ModManagerService: getCharacterKeybinds error for $characterId: $e');
       return null;
     }
   }
 
-  /// Зчитує keybinds для всіх персонажів в modsPath
-  /// Повертає мапу characterId -> CharacterKeybinds
   Future<Map<String, CharacterKeybinds>> getAllCharactersKeybinds() async {
     try {
       if (modsPath == null) return {};
-      
       return await _iniParser.parseAllCharacters(modsPath!);
     } catch (e) {
-      print('ModManagerService: Помилка зчитування keybinds для всіх персонажів: $e');
+      print('ModManagerService: getAllCharactersKeybinds error: $e');
       return {};
     }
   }
 
-  /// Завантажує keybinds для конкретного моду
-  /// modId - назва папки моду в modsPath
   Future<List<KeybindInfo>?> getModKeybinds(String modId) async {
     try {
       if (modsPath == null) return null;
@@ -642,40 +642,32 @@ class ModManagerService {
       final keybindsData = await _iniParser.parseCharacterDirectory(modId, modPath);
       return keybindsData?.keybinds;
     } catch (e) {
-      print('ModManagerService: Помилка завантаження keybinds для моду $modId: $e');
+      print('ModManagerService: getModKeybinds error for $modId: $e');
       return null;
     }
   }
 
-  /// Оновлює інформацію про персонажів, додаючи keybinds до модів
-  /// Приймає список персонажів і додає keybinds до кожного моду
   Future<List<CharacterInfo>> enrichCharactersWithKeybinds(
     List<CharacterInfo> characters,
   ) async {
     try {
-      print('ModManagerService: Завантаження keybinds для модів...');
-      
       final updatedCharacters = <CharacterInfo>[];
-      
       for (final character in characters) {
         final updatedMods = <ModInfo>[];
-        
         for (final mod in character.skins) {
           final keybinds = await getModKeybinds(mod.id);
           if (keybinds != null && keybinds.isNotEmpty) {
-            print('ModManagerService: Знайдено ${keybinds.length} keybinds для моду ${mod.id}');
+            print('ModManagerService: found ${keybinds.length} keybinds for ${mod.id}');
             updatedMods.add(mod.copyWith(keybinds: keybinds));
           } else {
             updatedMods.add(mod);
           }
         }
-        
         updatedCharacters.add(character.copyWith(skins: updatedMods));
       }
-      
       return updatedCharacters;
     } catch (e) {
-      print('ModManagerService: Помилка збагачення модів keybinds: $e');
+      print('ModManagerService: enrichCharactersWithKeybinds error: $e');
       return characters;
     }
   }

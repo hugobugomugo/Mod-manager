@@ -65,14 +65,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with TickerProv
   }
 
   Future<void> pickModsPath() async {
-    final result = await FilePicker.platform.getDirectoryPath();
+    final result = await FilePicker.getDirectoryPath();
     if (result != null) {
       setState(() => _modsPathController.text = result);
     }
   }
 
   Future<void> pickSaveModsPath() async {
-    final result = await FilePicker.platform.getDirectoryPath();
+    final result = await FilePicker.getDirectoryPath();
     if (result != null) {
       setState(() => _saveModsPathController.text = result);
     }

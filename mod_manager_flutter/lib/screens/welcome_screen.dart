@@ -124,14 +124,14 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> with TickerProvid
   }
 
   Future<void> _pickModsPath() async {
-    final result = await FilePicker.platform.getDirectoryPath();
+    final result = await FilePicker.getDirectoryPath();
     if (result != null) {
       setState(() => _modsPathController.text = result);
     }
   }
 
   Future<void> _pickSaveModsPath() async {
-    final result = await FilePicker.platform.getDirectoryPath();
+    final result = await FilePicker.getDirectoryPath();
     if (result != null) {
       setState(() => _saveModsPathController.text = result);
     }

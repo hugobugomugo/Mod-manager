@@ -6,7 +6,6 @@ import '../models/character_info.dart';
 import 'config_service.dart';
 import 'mod_manager_service.dart';
 
-/// API сервіс для роботи з модами
 class ApiService {
   static ModManagerService? _modManager;
   static ConfigService? _configService;
@@ -22,9 +21,7 @@ class ApiService {
     if (container != null) {
       _container = container;
       final localeCode = _configService?.language ?? 'en';
-      _container!
-          .read(localeProvider.notifier)
-          .state = Locale(localeCode);
+      _container!.read(localeProvider.notifier).state = Locale(localeCode);
     }
 
     if (_modManager == null) {
@@ -37,38 +34,39 @@ class ApiService {
       await initialize();
       return await _modManager!.getModsInfo();
     } catch (e) {
-      throw Exception('Помилка отримання модів: $e');
+      throw Exception('getMods error: $e');
     }
   }
 
-  static Future<bool> toggleMod(String modId) async {
+  static Future<bool> toggleMod(String modId, {bool? currentlyActive}) async {
     try {
       await initialize();
+      if (currentlyActive != null) {
+        return currentlyActive
+            ? await _modManager!.deactivateMod(modId)
+            : await _modManager!.activateMod(modId);
+      }
       return await _modManager!.toggleMod(modId);
     } catch (e) {
-      throw Exception('Помилка переключення моду: $e');
+      throw Exception('toggleMod error: $e');
     }
   }
 
-  /// Активує скін для персонажа, автоматично деактивуючи інші скіни цього персонажа
   static Future<bool> toggleModForCharacter(
-    String modId, 
-    String characterId, 
-    List<ModInfo> characterSkins, 
+    String modId,
+    String characterId,
+    List<ModInfo> characterSkins,
     {bool multiMode = false}
   ) async {
     try {
       await initialize();
-      
-      // Знаходимо поточний мод
       final currentMod = characterSkins.firstWhere((mod) => mod.id == modId);
-      
-      // Якщо мод вже активний, просто деактивуємо його
+
       if (currentMod.isActive) {
         return await _modManager!.deactivateMod(modId);
       }
-      
-      // У режимі Single - деактивуємо всі інші активні скіни
+
+      // single mode: deactivate all other active skins for this character
       if (!multiMode) {
         for (final skin in characterSkins) {
           if (skin.isActive && skin.id != modId) {
@@ -76,12 +74,10 @@ class ApiService {
           }
         }
       }
-      // У режимі Multi - просто додаємо до активних
-      
-      // Активуємо новий скін
+
       return await _modManager!.activateMod(modId);
     } catch (e) {
-      throw Exception('Помилка переключення моду для персонажа: $e');
+      throw Exception('toggleModForCharacter error: $e');
     }
   }
 
@@ -90,17 +86,15 @@ class ApiService {
       await initialize();
       final mods = await _modManager!.getModsInfo();
       int deactivated = 0;
-
       for (final mod in mods) {
         if (mod.isActive) {
           await _modManager!.deactivateMod(mod.id);
           deactivated++;
         }
       }
-
-      return 'Деактивовано $deactivated модів';
+      return 'Deactivated $deactivated mods';
     } catch (e) {
-      throw Exception('Помилка очищення: $e');
+      throw Exception('clearAll error: $e');
     }
   }
 
@@ -113,7 +107,7 @@ class ApiService {
         'language': _configService!.language,
       };
     } catch (e) {
-      throw Exception('Помилка отримання конфігурації: $e');
+      throw Exception('getConfig error: $e');
     }
   }
 
@@ -130,9 +124,27 @@ class ApiService {
     try {
       await initialize();
       await _configService!.setPaths(modsPath, saveModsPath);
-      return 'Конфігурацію збережено';
+      return 'Config saved';
     } catch (e) {
-      throw Exception('Помилка оновлення конфігурації: $e');
+      throw Exception('updateConfig error: $e');
+    }
+  }
+
+  static Future<bool> renameMod(String oldId, String newName) async {
+    try {
+      await initialize();
+      return await _modManager!.renameMod(oldId, newName);
+    } catch (e) {
+      throw Exception('renameMod error: $e');
+    }
+  }
+
+  static Future<bool> deleteMod(String modId) async {
+    try {
+      await initialize();
+      return await _modManager!.deleteMod(modId);
+    } catch (e) {
+      throw Exception('deleteMod error: $e');
     }
   }
 
@@ -140,7 +152,7 @@ class ApiService {
     try {
       return true;
     } catch (e) {
-      throw Exception('Помилка оновлення моду: $e');
+      throw Exception('updateMod error: $e');
     }
   }
 
@@ -154,23 +166,20 @@ class ApiService {
     return _modManager!;
   }
 
-  /// Автоматично визначає та встановлює теги для всіх модів
   static Future<Map<String, String>> autoTagAllMods() async {
     try {
       await initialize();
       return await _modManager!.autoTagAllMods();
     } catch (e) {
-      throw Exception('Помилка автотегування: $e');
+      throw Exception('autoTagAllMods error: $e');
     }
   }
 
-  /// Перевіряє, чи це перший запуск додатку
   static Future<bool> isFirstRun() async {
     await initialize();
     return _configService!.isFirstRun;
   }
 
-  /// Завершує початкове налаштування
   static Future<void> completeFirstRun() async {
     await initialize();
     await _configService!.setFirstRunComplete();
